@@ -1,0 +1,41 @@
+asn1 = SEQUENCE:seq_section
+[seq_section]
+# challengePassword
+field1 = OID:challengePassword
+#
+field2 = SEQUENCE:rsaattrs
+# identifier request
+field3 = SEQUENCE:idreq
+# cmc RA
+field4 = SEQUENCE:cmcra
+# public key info
+field5 = OID:sha256WithRSAEncryption
+# serial number
+field6 = OID:serialNumber
+
+[rsaattrs]
+field1 = OID:rsaEncryption
+field2 = SET:length
+
+[length]
+field1 = INTEGER:2048
+
+[idreq]
+field1 = OID:extReq
+field2 = SET:extattrs
+
+[extattrs]
+# very important info
+field1 = OID:mac-address
+field2 = OID:favouriteDrink
+field3 = OID:wfaImei
+
+[cmcra]
+field1 = OID:extendedKeyUsage
+field2 = SET:ekuattrs
+
+[ekuattrs]
+field1 = OID:cmcRA
+field2 = OID:clientAuth
+
+

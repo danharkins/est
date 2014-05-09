@@ -1,0 +1,32 @@
+asn1 = SEQUENCE:seq_section
+[seq_section]
+# challengePassword
+field1 = OID:challengePassword
+# domain parameter set
+field2 = SEQUENCE:ecattrs
+#
+field3 = OID:serialNumber
+#
+field4 = SEQUENCE:extnd
+# hash algorithm
+field5 = OID:ecdsa-with-SHA256
+
+[ecattrs]
+field1 = OID:id-ecPublicKey
+field2 = SET:curve
+
+[curve]
+#field1 = OID:brainpoolp256r1
+field1 = OID:prime256v1
+
+[extnd]
+field1 = OID:extReq
+field2 = SET:extattrs
+
+[extattrs]
+field1 = OID:mac-address
+field2 = OID:wfaImei
+field3 = OID:wfaMeid
+field4 = OID:wfaDevid
+field5 = OID:favouriteDrink
+

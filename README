@@ -1,0 +1,153 @@
+
+-----------------------------
+EST Reference Implementation
+-----------------------------
+
+  Fully-compliant with RFC 7030. Also has support for a
+  openssl implementations with draft-ietf-tls-pwd-04
+  support -- parlay a simple password/passphrase into 
+  a certificate!
+
+  Uses OpenSSL version 1.0.1g (and later) and libcurl
+  version 7.34.0 (and later).
+
+  Comments, questions, issues, etc should be directed
+  to estinfo@lounge.org.
+
+Organization
+------------
+
+  client -- contains cest, the client implementaiton of est.
+  server -- contains sest, the server implementation of est.
+  ca -- an RSA-based CA that can be used by the server.
+  ecca -- an ECC-based CA that can be used by the server.
+
+Building
+--------
+
+Tested on OSX, FreeBSD, and linux.
+
+- ./configure [--with-ssl=<openssl-dir>] [--with-curl=<curl-dir>] [--enable-debug]
+- make
+- cd ca; ./genca; ./gensestcert; 
+- cd ecca; ./genecca prime256v1; ./gensesteccert; 
+
+(or secp384r1 or secp521r1 or any valid curve in openssl)
+
+Both gensestcert and gensesteccert will enroll the server in the
+appropriate CA. The resulting certificate is copied to the server
+directory as sestcert.pem or sesteccert.pem, as the case may be.
+
+Note: when generating the CA's certificate and the server's certificate
+you will be prompted for the components of the DN. The CA's can be anything
+you want. For the server, make the CN be the IP address of the interface
+that it will be binding to-- for instance 127.0.0.1 if it's the loopback
+or 69.55.226.174 if EST is running on www.lounge.org-- otherwise the
+client's certificate validation check will fail (try it and see!)
+
+Note well: if you are linking to the specific libraries for OpenSSL
+and/or libcurl, that is if you use the --with-ssl or --with-curl
+directives to configure, it will probably be necessary to set the
+LD_LIBRARY_PATH (or OS-specific equivalent) to ensure those libraries
+are dynamically loaded at run time. Weirdness ensues if you don't.
+Try doing ldd on the executable to ensure it's doing what you think
+it should be doing. If all else fails, build OpenSSL and libcurl
+as static and invoke EST's configure with the [--enable-static] option.
+
+Make sure that the OpenSSL distribution you're linking to for EST
+is the same one that you linked to when building the curl distribution
+you're linking to for EST otherwise things don't work right.
+
+Running
+-------
+
+- start up a CA, either ca/ca or ecca/ecca
+- start up sest (sest -help will give options)
+- start up cest -u username -h hostname
+        -p: port (default is 8443)
+	-c: path to trust anchor database (a directory)
+	-f: CA's cert (a file, if not using the -c option)
+        -i: do not verify the server's certificate
+        -r: use TLS-pwd (only included with TLS-pwd support)
+        -t: use TLSv1 (default TLS_v1_2)
+	-x: filename holding a PEM-encoded private key
+	-y: filename holding a PEM-encoded certificate
+	-k: let the server generate the private key
+- see the ADDUSER file in server to see how to add new users
+  for TLS-pwd and HTTP Digest authentication. Current test
+  user is "fred" whose password is "barney". This account
+  has been added for authentication using both HTTP Digest
+  and TLS-pwd.
+- the client uses an explicit trust anchor database (TADB.
+  If the client connects to a server and is unable to validate
+  the server's certificate due to lack of a trust anchor,
+  and a TADB is indicated with the -c option, the server
+  will prompt to add the CA certificate to the TADB.
+- the client's explicit TADB can be populated manually by 
+  putting the certificate to trust in the TADB directory with
+  the file name of the certificate's subject hash. The subject
+  hash of a certificate can be obtained thusly:
+
+    % openssl x509 -in <cert.pem> -subject_hash -noout
+
+  Make the filename of the certificate be its subject_hash
+  and copy that file to the TADB.
+- the server and client support the /csrattrs query and
+  the attributes to use with such a query can be specified
+  using an NCONF file (see OpenSSL documentation, or look
+  at the example .nconf files in the server directory).
+- ca and ecca are suitable only for testing purposes. They
+  are not real CAs and should not be treated as such.
+
+Note: the CA will not issue certificates with identical DNs. If
+a certificate is obtained for 'fred' (or anyone else) using
+cest and you try to run cest again for the same user, issuance
+will fail. By using an NCONF file with sest it is possible to
+instruct cest to include an attribute for serialNumber. The
+client will use a random serial number in its DN which
+will make unique DNs and avoid CA issuance failure on account
+of duplicate names.
+
+Note well: it's possible to misconfigure everything. For example,
+have the server do ECC enrollment using the ECC CA but use a
+certificate itself from the RSA CA. The client will never be
+able to authenticate the server and will continually add the
+ECC CA certifcate to the TADB. Make sure things are configured
+in a correct and consistent manner. Edit server/sest.conf to set
+defaults for your site.
+
+Examples
+--------
+
+First start est/ca/ca and est/ecca/ecca to have CAs running
+before you run sest or cest.
+
+1. use the RSA CA, client does http digest authentication
+   with the TADB at ./tadb  and produces verbose output;
+   servers run on loopback.
+
+  server: % est/server/sest
+  client: % est/client/cest -u fred -h 127.0.0.1 -s -c ./tadb
+
+2. use the RSA CA, client does cert-based authentication with
+   the TADB at ./tadb; server runs on loopback and responds
+   to /csrattrs queries using the NCONF file rsaattrs.nconf
+
+  server: % est/server/sest -n rsaattrs.nconf
+  client: % est/client/cest -u fred -h 127.0.0.1 -x <key.pem> -y <cert.pem> -c ./tadb
+
+3. use the ECC CA, server defaults to prime256v1 and SHA256; client 
+   uses TLS-pwd for authentication.
+
+  server: % est/server/sest -y yes 
+  client: % est/client/cest -u fred -h 127.0.0.1 -r
+
+4. use the ECC CA, server specifies the secp384r1 curve and sha384 
+   and responds to /csrattrs queries using the NCONF file ecattrs.nconf;
+   client does TLS-pwd and prints out progress (not as verbosely as -s)
+
+  server: % est/server/sest -y yes -x secp384r1 -h sha384 -n ecattrs.nconf
+  client: % est/client/cest -u fred -h 127.0.0.1 -v -r
+
+Edit server/sest.conf to set defaults if the existing ones are not appropriate.
+

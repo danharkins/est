@@ -1,0 +1,18 @@
+
+Adding New Users to server password database
+--------------------------------------------
+
+- to make password entries for HTTP Digest authenticaiton:
+
+  % md5 -s "name:realm:password"
+
+put the result in the pw.txt file as:
+
+name:realm:md5(name:realm:password)
+
+- to make password entries for TLS-pwd authentication:
+
+% <path-to-tls-pwd-openssl>/apps/openssl pwd -pwdfile <file> -add -username <name> -password <password>
+
+will generate base and salt and append an entry for <name> into <file>
+
