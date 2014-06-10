@@ -2117,37 +2117,31 @@ mg_send_attrs (struct mg_connection *conn)
     char *buf = NULL, *data, date[64], range[64], *str; 
     unsigned char *p;
     time_t curtime = time(NULL);
-    int i, objlen, totlen, num, sent, nid = -1;
+    int i, objlen, totlen = 0, num, sent, nid = -1;
 
     if ((bio = BIO_new(BIO_s_mem())) == NULL) {
-        sk_ASN1_OBJECT_free(sk);
         goto fail;
     }
     if ((b64 = BIO_new((BIO_METHOD *)BIO_f_base64())) == NULL) {
         BIO_free(bio);
-        sk_ASN1_OBJECT_free(sk);
         goto fail;
     }
     bio = BIO_push(b64, bio);
 
     if (conn->ctx->config[NCONF_CSRATTRS] != NULL) {
         cnf = NCONF_new(NULL);
-        if (NCONF_load(cnf, conn->ctx->config[NCONF_CSRATTRS], &err) == 0) {
-            goto fail;
+        if ((NCONF_load(cnf, conn->ctx->config[NCONF_CSRATTRS], &err) != 0) &&
+            ((str = NCONF_get_string(cnf, "default", "asn1")) != NULL) &&
+            ((asn1 = ASN1_generate_nconf(str, cnf)) != NULL)) {
+            totlen = i2d_ASN1_TYPE(asn1, NULL);
+            i2d_ASN1_TYPE(asn1, (unsigned char **)&buf);
         }
-        if ((str = NCONF_get_string(cnf, "default", "asn1")) == NULL) {
-            goto fail;
-        }
-        if ((asn1 = ASN1_generate_nconf(str, cnf)) == NULL) {
-            goto fail;
-        }
-        totlen = i2d_ASN1_TYPE(asn1, NULL);
-        i2d_ASN1_TYPE(asn1, (unsigned char **)&buf);
-        NCONF_free(cnf);
-        cnf = NULL;
-        ASN1_TYPE_free(asn1);
-    } else {
-
+    } 
+    /*
+     * if there was no NCONF file or if there was an error parsing
+     * just fallback to an alternative way of specifying csrattrs.
+     */
+    if (totlen == 0) {
         if ((sk = sk_ASN1_OBJECT_new_null()) == NULL) {
             goto fail;
         }
@@ -2200,27 +2194,6 @@ mg_send_attrs (struct mg_connection *conn)
     (void)BIO_flush(bio);
     num = BIO_get_mem_data(bio, &data);
     
-    if (0) {
-fail:
-        if (asn1 != NULL) {
-            ASN1_TYPE_free(asn1);
-        }
-        if (cnf != NULL) {
-            NCONF_free(cnf);
-        }
-        /*
-         * something happened so we didn't tell the client to
-         * include challengePassword and if we didn't say to
-         * we shouldn't check later. Maybe we should fail this
-         * connection instead of sending no csrattrs....
-         */
-        conn->cp_len = 0;
-        /*
-         * an empty SEQUENCE OF that's been base64 encoded
-         */
-        strcpy(data, "MA==");
-        num = 4;
-    }
     if (buf != NULL) {
         free(buf);
     }
@@ -2246,7 +2219,24 @@ fail:
         conn->num_bytes_sent += sent;
         num -= sent;
     }
+    free(data);
     
+    if (0) {
+fail:
+        /*
+         * something happened so we didn't tell the client to
+         * include challengePassword but we insist on it anyway.
+         * Maybe we should fail this connection instead of
+         * sending no csrattrs....
+         */
+        send_http_error(conn, 505, "Internal error", "");
+    }
+    if (asn1 != NULL) {
+        ASN1_TYPE_free(asn1);
+    }
+    if (cnf != NULL) {
+        NCONF_free(cnf);
+    }
     if (sk != NULL) {
         sk_ASN1_OBJECT_free(sk);
     }
