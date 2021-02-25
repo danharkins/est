@@ -24,7 +24,7 @@ echo "Generating a new CA..."
 #
 openssl req -config ${CATOP}/conf/openssl.cnf $SSLEAY_CONFIG \
     -newkey rsa:2048 -x509 \
-    -nodes -sha256 -keyout ${CATOP}/private/estcakey.pem \
+    -nodes -sha512 -keyout ${CATOP}/private/estcakey.pem \
     -out ${CATOP}/estcacert.pem -days 3650
 #
 # make a der-encoded p7 of the CA's cert for the server to

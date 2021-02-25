@@ -24,9 +24,12 @@ field1 = OID:extReq
 field2 = SET:extattrs
 
 [extattrs]
-field1 = OID:mac-address
-field2 = OID:wfaImei
-field3 = OID:wfaMeid
-field4 = OID:wfaDevid
-field5 = OID:favouriteDrink
+field1 = OID:favouriteDrink
+#
+# uncomment the following if you add them to your openssl distro
+#
+#field2 = OID:mac-address
+#field3 = OID:wfaImei
+#field4 = OID:wfaMeid
+#field5 = OID:wfaDevid
 

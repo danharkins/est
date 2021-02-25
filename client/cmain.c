@@ -1,7 +1,7 @@
 /*
  * cmain -- wrapper to construct cruft and call EST client module
  *
- * Copyright (c) Dan Harkins, 2014
+ * Copyright (c) Dan Harkins, 2014, 2021
  *
  *  Copyright holder grants permission for redistribution and use in source 
  *  and binary forms, with or without modification, provided that the 

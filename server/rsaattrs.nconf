@@ -5,7 +5,7 @@ field1 = OID:challengePassword
 #
 field2 = SEQUENCE:rsaattrs
 # identifier request
-field3 = SEQUENCE:idreq
+#field3 = SEQUENCE:idreq
 # cmc RA
 field4 = SEQUENCE:cmcra
 # public key info
@@ -18,17 +18,20 @@ field1 = OID:rsaEncryption
 field2 = SET:length
 
 [length]
-field1 = INTEGER:2048
+field1 = INTEGER:4096
 
 [idreq]
 field1 = OID:extReq
 field2 = SET:extattrs
 
 [extattrs]
+#
+# uncomment the following if you add them to your openssl distro
+#
 # very important info
-field1 = OID:mac-address
-field2 = OID:favouriteDrink
-field3 = OID:wfaImei
+#field1 = OID:mac-address
+#field2 = OID:favouriteDrink
+#field3 = OID:wfaImei
 
 [cmcra]
 field1 = OID:extendedKeyUsage

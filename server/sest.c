@@ -1,7 +1,7 @@
 /*
  * sest - server side of EST (mongoose turned into sest)
  *
- * Copyright (c) Dan Harkins, 2014
+ * Copyright (c) Dan Harkins, 2014, 2021
  *
  *  Copyright holder grants permission for redistribution and use in source 
  *  and binary forms, with or without modification, provided that the 
@@ -616,7 +616,7 @@ static int should_keep_alive(const struct mg_connection *conn) {
   const char *http_version = conn->request_info.http_version;
   const char *header = mg_get_header(conn, "Connection");
   return (!conn->must_close &&
-          !conn->request_info.status_code != 401 &&
+//          !(conn->request_info.status_code != 401) &&
           !mg_strcasecmp(conn->ctx->config[ENABLE_KEEP_ALIVE], "yes") &&
           (header == NULL && http_version && !strcmp(http_version, "1.1"))) ||
           (header != NULL && !mg_strcasecmp(header, "keep-alive"));
@@ -1697,7 +1697,7 @@ handle_file_request(struct mg_connection *conn, const char *path,
     FILE *fp; 
     int len; 
     char *data = NULL, *foo = NULL; 
-    EVP_ENCODE_CTX ctx; 
+    EVP_ENCODE_CTX *ctx; 
 
     get_mime_type(conn->ctx, path, &mime_vec); 
     cl = stp->size; 
@@ -1729,11 +1729,15 @@ handle_file_request(struct mg_connection *conn, const char *path,
             fprintf(stderr, "cannot read %" INT64_FMT " bytes from file!\n", cl); 
             goto err; 
         } 
-        EVP_EncodeInit(&ctx); 
-        EVP_EncodeUpdate(&ctx, (unsigned char *)data, &len, (unsigned char *)foo, cl); 
+        if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+            goto err;
+        }
+        EVP_EncodeInit(ctx); 
+        EVP_EncodeUpdate(ctx, (unsigned char *)data, &len, (unsigned char *)foo, cl); 
         cl = len; 
-        EVP_EncodeFinal(&ctx, (unsigned char *)&(data[len]), &len); 
+        EVP_EncodeFinal(ctx, (unsigned char *)&(data[len]), &len); 
         cl += len; 
+        EVP_ENCODE_CTX_free(ctx);
     } 
     send_data_to_peer(conn, (unsigned char *)data, cl, &mime_vec); 
 
@@ -2128,6 +2132,7 @@ mg_send_attrs (struct mg_connection *conn)
     }
     bio = BIO_push(b64, bio);
 
+#if 0
     if (conn->ctx->config[NCONF_CSRATTRS] != NULL) {
         cnf = NCONF_new(NULL);
         if ((NCONF_load(cnf, conn->ctx->config[NCONF_CSRATTRS], &err) != 0) &&
@@ -2137,6 +2142,28 @@ mg_send_attrs (struct mg_connection *conn)
             i2d_ASN1_TYPE(asn1, (unsigned char **)&buf);
         }
     } 
+#else
+    if (conn->ctx->config[NCONF_CSRATTRS] != NULL) {
+        cnf = NCONF_new(NULL);
+        if (NCONF_load(cnf, conn->ctx->config[NCONF_CSRATTRS], &err) != 0) {
+            str = NCONF_get_string(cnf, "default", "asn1");
+            if (str != NULL) {
+                asn1 = ASN1_generate_nconf(str, cnf);
+                fprintf(stderr, "str = %s\n", str);
+                if (asn1 != NULL) {
+                    totlen = i2d_ASN1_TYPE(asn1, NULL);
+                    i2d_ASN1_TYPE(asn1, (unsigned char **)&buf);
+                } else {
+                    fprintf(stderr, "NCONF failed: asn1 == NULL!\n");
+                }
+            } else {
+                fprintf(stderr, "NCONF failed: str == NULL!\n");
+            }
+        } else {
+            fprintf(stderr, "NCONF failed: nconf load == 0!\n");
+        }
+    } 
+#endif    
     /*
      * if there was no NCONF file or if there was an error parsing
      * just fallback to an alternative way of specifying csrattrs.
@@ -2171,8 +2198,8 @@ mg_send_attrs (struct mg_connection *conn)
          * figure out how big this sequence is gonna be...
          */
         objlen = 0;
-        for (i = SKM_sk_num(ASN1_OBJECT, sk)-1; i >= 0; i--) {
-            objlen += i2d_ASN1_OBJECT(SKM_sk_value(ASN1_OBJECT, sk, i), NULL);
+        for (i = sk_ASN1_OBJECT_num(sk)-1; i >= 0; i--) {
+            objlen += i2d_ASN1_OBJECT(sk_ASN1_OBJECT_value(sk, i), NULL);
         }
         totlen = ASN1_object_size(1, objlen, V_ASN1_SEQUENCE);
     
@@ -2185,8 +2212,8 @@ mg_send_attrs (struct mg_connection *conn)
         memset(buf, 0, totlen+1);
         p = (unsigned char *)buf;
         ASN1_put_object(&p, 1, objlen, V_ASN1_SEQUENCE, V_ASN1_UNIVERSAL);
-        for (i = 0; i < SKM_sk_num(ASN1_OBJECT, sk); i++) {
-            i2d_ASN1_OBJECT(SKM_sk_value(ASN1_OBJECT, sk, i), &p);
+        for (i = 0; i < sk_ASN1_OBJECT_num(sk); i++) {
+            i2d_ASN1_OBJECT(sk_ASN1_OBJECT_value(sk, i), &p);
         }
     }
     
@@ -2333,7 +2360,7 @@ mg_server_keygen (struct mg_connection *conn)
     unsigned int len;
     unsigned char *data, *p, *p7 = NULL, *csrbuf;
     int32_t p7len = 0;
-    EVP_ENCODE_CTX ctx;
+    EVP_ENCODE_CTX *ctx;
     BIO *bio = NULL;
     char date[64];
     char b64p8[2000];
@@ -2355,13 +2382,17 @@ mg_server_keygen (struct mg_connection *conn)
         free(csrbuf);
         goto no_cert;
     }
-    EVP_DecodeInit(&ctx);
-    EVP_DecodeUpdate(&ctx, 
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        goto no_cert;
+    }
+    EVP_DecodeInit(ctx);
+    EVP_DecodeUpdate(ctx, 
                      (unsigned char *)data, &i,
                      (unsigned char *)csrbuf, conn->content_len);
     num = i;
-    EVP_DecodeFinal(&ctx, (unsigned char *)&(data[i]), &i);
+    EVP_DecodeFinal(ctx, (unsigned char *)&(data[i]), &i);
     num += i;
+    EVP_ENCODE_CTX_free(ctx);
 
     free(csrbuf);
     if ((bio = BIO_new_mem_buf(data, num)) == NULL) {
@@ -2437,7 +2468,7 @@ mg_server_keygen (struct mg_connection *conn)
     /*
      * convert the PKEY into a PKCS8 structure
      */
-    if (!(p8info = EVP_PKEY2PKCS8_broken(key, PKCS8_OK))) {
+    if (!(p8info = EVP_PKEY2PKCS8(key))) {
         goto no_cert;
     }
     if ((bio = BIO_new(BIO_s_mem())) == NULL) {
@@ -2450,11 +2481,15 @@ mg_server_keygen (struct mg_connection *conn)
     /*
      * and encode it in base64
      */
-    EVP_EncodeInit(&ctx);
-    EVP_EncodeUpdate(&ctx, (unsigned char *)b64p8, &i, (unsigned char *)p, p8len);
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        goto no_cert;
+    }
+    EVP_EncodeInit(ctx);
+    EVP_EncodeUpdate(ctx, (unsigned char *)b64p8, &i, (unsigned char *)p, p8len);
     p8len = i;
-    EVP_EncodeFinal(&ctx, (unsigned char *)&(b64p8[i]), &i);
+    EVP_EncodeFinal(ctx, (unsigned char *)&(b64p8[i]), &i);
     p8len += i;
+    EVP_ENCODE_CTX_free(ctx);
 
     printf("p8 base64 is %d bytes (update produced %d of them)\n", p8len, p8len - i);
 
@@ -2479,12 +2514,16 @@ mg_server_keygen (struct mg_connection *conn)
     }
     p = data;
     len = i2d_X509_REQ(req, &p);
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        goto no_cert;
+    }
     i = 0;
-    EVP_EncodeInit(&ctx);
-    EVP_EncodeUpdate(&ctx, csrbuf, &i, (unsigned char *)data, len);
+    EVP_EncodeInit(ctx);
+    EVP_EncodeUpdate(ctx, csrbuf, &i, (unsigned char *)data, len);
     len = i;
-    EVP_EncodeFinal(&ctx, (unsigned char *)&(csrbuf[i]), &i);
+    EVP_EncodeFinal(ctx, (unsigned char *)&(csrbuf[i]), &i);
     len += i;
+    EVP_ENCODE_CTX_free(ctx);
     free(data);
 
     printf("sending %d byte CSR to CA...\n", len);
@@ -2572,7 +2611,7 @@ mg_server_keygen (struct mg_connection *conn)
 static void
 mg_enroll_client (struct mg_connection *conn)
 {
-    int i, j, num, nid, good_csr = 0;
+    int i, j, num;
     int32_t p7len = 0;
     struct vec mime_vec;
     char *asn1 = NULL;
@@ -2585,10 +2624,10 @@ mg_enroll_client (struct mg_connection *conn)
     ASN1_BIT_STRING *bstr = NULL;
     ASN1_OBJECT *xobj = NULL;
     BIO *bio = NULL, *b64 = NULL;
-    STACK_OF(X509_ATTRIBUTE) *sk;
     unsigned char fin[24];
     char *data;
-    EVP_ENCODE_CTX ctx;
+    EVP_ENCODE_CTX *ctx;
+    const unsigned char *objdata;
     
     if ((bio = BIO_new(BIO_s_mem())) == NULL) {
         goto bad_csr;
@@ -2639,15 +2678,19 @@ mg_enroll_client (struct mg_connection *conn)
 
     if ((asn1 = malloc(conn->content_len)) == NULL) {
         fprintf(stderr, "unable to malloc data to get asn1\n");
-        return;
+        goto bad_csr;
     }
-    EVP_DecodeInit(&ctx);
-    EVP_DecodeUpdate(&ctx, 
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        goto bad_csr;
+    }
+    EVP_DecodeInit(ctx);
+    EVP_DecodeUpdate(ctx, 
                      (unsigned char *)asn1, &i, 
                      (unsigned char *)csr, conn->content_len);
     num = i;
-    EVP_DecodeFinal(&ctx, (unsigned char *)&(asn1[i]), &i);
+    EVP_DecodeFinal(ctx, (unsigned char *)&(asn1[i]), &i);
     num += i;
+    EVP_ENCODE_CTX_free(ctx);
     
     /*
      * extract an X509_REQ
@@ -2661,59 +2704,43 @@ mg_enroll_client (struct mg_connection *conn)
         goto bad_csr;
     }
     BIO_free(bio); bio = NULL;
-    sk = req->req_info->attributes;
-    if (sk_X509_ATTRIBUTE_num(sk) == 0) {
-        fprintf(stderr, "no challenge password in the X509_REQ!\n");
-        goto bad_csr;
-    }
     /*
-     * trudge through the attributes looking for challengePassword
+     * extract the challengePassword attribute from the CSR
      */
-    for (i = 0; i < sk_X509_ATTRIBUTE_num(sk); i++) {
-        attr = sk_X509_ATTRIBUTE_value(sk, i);
-        nid = OBJ_obj2nid(attr->object);
-        if (nid != NID_pkcs9_challengePassword) {
-            continue;
-        }
-        if (attr->single) {
-            /* not sure a valid challengePassword will reach this */
-            bstr = attr->value.single->value.bit_string;
-        } else {
-            at = sk_ASN1_TYPE_value(attr->value.set, 0);
-            bstr = at->value.asn1_string;
-        }
-        if (memcmp(bstr->data, conn->cp, conn->cp_len) != 0) {
-            int is_ra = 0;
-            
-            fprintf(stderr, "challengePassword differs!\n");
-            /*
-             * check if the client is also an RA, and if so
-             * assume it's acting on behalf of another client
-             */
-            if ((peercert = SSL_get_peer_certificate(conn->ssl)) == NULL) {
-                goto bad_csr;
-            }
-            if ((xkeyu = X509_get_ext_d2i(peercert, NID_ext_key_usage, NULL, NULL)) == NULL) {
-                goto bad_csr;
-            }
-            for (j = 0; j < sk_ASN1_OBJECT_num(xkeyu); j++) {
-                xobj = sk_ASN1_OBJECT_value(xkeyu, j);
-                if ((xobj->length == 8) &&
-                    (memcmp(xobj->data, cmcra, xobj->length) == 0)) {
-                    is_ra = 1;
-                    break;
-                }
-            }
-            sk_ASN1_OBJECT_pop_free(xkeyu, ASN1_OBJECT_free);
-            if (!is_ra) {
-                goto bad_csr;
-            }
-        }
-        good_csr = 1;
-        break;
-    }
-    if (!good_csr) {
+    if (((num = X509_REQ_get_attr_by_NID(req, NID_pkcs9_challengePassword, -1)) < 0) ||
+        ((attr = X509_REQ_get_attr(req, num)) == NULL)) {
+        fprintf(stderr, "unable to find challenge password in CSR!\n");
         goto bad_csr;
+    }
+    at = X509_ATTRIBUTE_get0_type(attr, 0);
+    bstr = at->value.asn1_string;
+    if (memcmp(bstr->data, conn->cp, conn->cp_len) != 0) {
+        int is_ra = 0;
+            
+        fprintf(stderr, "challengePassword differs!\n");
+        /*
+         * check if the client is also an RA, and if so
+         * assume it's acting on behalf of another client
+         */
+        if ((peercert = SSL_get_peer_certificate(conn->ssl)) == NULL) {
+            goto bad_csr;
+        }
+        if ((xkeyu = X509_get_ext_d2i(peercert, NID_ext_key_usage, NULL, NULL)) == NULL) {
+            goto bad_csr;
+        }
+        for (j = 0; j < sk_ASN1_OBJECT_num(xkeyu); j++) {
+            xobj = sk_ASN1_OBJECT_value(xkeyu, j);
+            objdata = OBJ_get0_data(xobj);
+            if ((OBJ_length(xobj) == 8) &&
+                (memcmp(objdata, cmcra, OBJ_length(xobj)) == 0)) {
+                is_ra = 1;
+                break;
+            }
+        }
+        sk_ASN1_OBJECT_pop_free(xkeyu, ASN1_OBJECT_free);
+        if (!is_ra) {
+            goto bad_csr;
+        }
     }
     /*
      * CSR checks out, send it to the CA

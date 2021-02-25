@@ -1,7 +1,7 @@
 /*
  * ca - stand-alone CA serving up RSA certificates for EST server
  *
- * Copyright (c) Dan Harkins, 2014
+ * Copyright (c) Dan Harkins, 2014, 2021
  *
  *  Copyright holder grants permission for redistribution and use in source 
  *  and binary forms, with or without modification, provided that the 
@@ -44,7 +44,6 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
-#include <sys/sysctl.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
@@ -61,14 +60,14 @@ static void
 sign_req (int fd, void *unused)
 {
     char thefile[80], cmd_buf[300], p7[3000];
-    int i, num;
+    int i, num, ret;
     unsigned char *data, *asn1;
     int32_t msglen;
     BIO *bio = NULL;
     FILE *fp;
     struct stat blah;
     X509_REQ *req = NULL;
-    EVP_ENCODE_CTX ctx;
+    EVP_ENCODE_CTX *ctx;
     
     if (recv(fd, (char *)&msglen, sizeof(int32_t), MSG_WAITALL) < sizeof(int32_t)) {
         return;
@@ -89,11 +88,15 @@ sign_req (int fd, void *unused)
         return;
     }
 
-    EVP_DecodeInit(&ctx);
-    EVP_DecodeUpdate(&ctx, asn1, &i, data, msglen);
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        return;
+    }
+    EVP_DecodeInit(ctx);
+    EVP_DecodeUpdate(ctx, asn1, &i, data, msglen);
     num = i;
-    EVP_DecodeFinal(&ctx, &(asn1[i]), &i);
+    EVP_DecodeFinal(ctx, &(asn1[i]), &i);
     num += i;
+    EVP_ENCODE_CTX_free(ctx);
     free(data);
 
     if ((bio = BIO_new_mem_buf(asn1, num)) == NULL) {
@@ -128,7 +131,10 @@ sign_req (int fd, void *unused)
              "-policy policy_anything -batch -notext "
              "-config ./conf/openssl.cnf "
              "-out %dcert.pem -in %dreq.pem", unique, unique);
-    system(cmd_buf);
+    ret = system(cmd_buf);
+    if (ret < 0) {
+        fprintf(stderr, "ca: error calling %s\n", cmd_buf);
+    }
     unlink(thefile);
 
     snprintf(thefile, sizeof(thefile), "%dcert.pem", unique);
@@ -139,7 +145,10 @@ sign_req (int fd, void *unused)
     snprintf(cmd_buf, sizeof(cmd_buf),
              "openssl crl2pkcs7 "
              "-certfile %dcert.pem -outform DER -out %dder.p7 -nocrl", unique, unique);
-    system(cmd_buf);
+    ret = system(cmd_buf);
+    if (ret < 0) {
+        fprintf(stderr, "ca: error calling %s\n", cmd_buf);
+    }
     unlink(thefile); 
 
     snprintf(thefile, sizeof(thefile), "%dder.p7", unique);
@@ -164,11 +173,15 @@ sign_req (int fd, void *unused)
     unlink(thefile);
     
     i = 0;
-    EVP_EncodeInit(&ctx);
-    EVP_EncodeUpdate(&ctx, data, &i, (unsigned char *)p7, blah.st_size);
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        return;
+    }
+    EVP_EncodeInit(ctx);
+    EVP_EncodeUpdate(ctx, data, &i, (unsigned char *)p7, blah.st_size);
     num = i;
-    EVP_EncodeFinal(&ctx, (unsigned char *)&(data[i]), &i);
+    EVP_EncodeFinal(ctx, (unsigned char *)&(data[i]), &i);
     num += i;
+    EVP_ENCODE_CTX_free(ctx);
     printf("PEM-encoded P7 is %d bytes\n", num);
     msglen = num;
     msglen = htonl(msglen);

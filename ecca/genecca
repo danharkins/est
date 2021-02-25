@@ -26,7 +26,7 @@ openssl ecparam -name ${1} -out ${CATOP}/curveparam.pem
 #
 openssl req -config ${CATOP}/conf/openssl.cnf $SSLEAY_CONFIG \
     -newkey ec:${CATOP}/curveparam.pem -x509 \
-    -nodes -sha256 -keyout ${CATOP}/private/estcakey.pem \
+    -nodes -sha512 -keyout ${CATOP}/private/estcakey.pem \
     -out ${CATOP}/estcacert.pem -days 3650
 #
 # make a der-encoded p7 of the CA's cert for the server to

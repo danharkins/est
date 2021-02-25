@@ -1,7 +1,7 @@
 /*
  * cest - client side of EST
  *
- * Copyright (c) Dan Harkins, 2014
+ * Copyright (c) Dan Harkins, 2014, 2021
  *
  *  Copyright holder grants permission for redistribution and use in source 
  *  and binary forms, with or without modification, provided that the 
@@ -68,7 +68,7 @@ struct buffer {
  */
 static const unsigned char ma[] = { 0x2b, 0x06, 0x01, 0x01, 0x01, 0x01, 0x16 };
 static const unsigned char im[] = { 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xbe, 0x68, 0x01, 0x01, 0x03 };
-static const unsigned char me[] = { 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xbe, 0x68, 0x01, 0x01, 0x04 };
+//static const unsigned char me[] = { 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xbe, 0x68, 0x01, 0x01, 0x04 };
 static const unsigned char di[] = { 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xbe, 0x68, 0x01, 0x01, 0x05 };
 static const unsigned char dr[] = { 0x09, 0x92, 0x26, 0x89, 0x93, 0xf2, 0x2c, 0x64, 0x01, 0x05 };
 static const unsigned char ra[] = { 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x1c };
@@ -86,7 +86,33 @@ static const unsigned char ra[] = { 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x
 #define cmcra_nid               9997
 #define mac_nid                 9996
 
-ASN1_OBJECT known_oids[FIN_KNOWN_OID] = {
+/*
+ * I get so tired having to deal with objects that openssl just decides to make opaque!
+ */
+typedef struct asn1_object_st
+{
+    const char *sn,*ln;
+    int nid;
+    int length;
+    const unsigned char *data; 
+    int flags;
+} ASN1OBJ;
+
+ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
+                             long length);
+int i2c_ASN1_BIT_STRING(ASN1_BIT_STRING *a, unsigned char **pp);
+ASN1_BIT_STRING *c2i_ASN1_BIT_STRING(ASN1_BIT_STRING **a,
+                                     const unsigned char **pp, long length);
+int i2c_ASN1_INTEGER(ASN1_INTEGER *a, unsigned char **pp);
+ASN1_INTEGER *c2i_ASN1_INTEGER(ASN1_INTEGER **a, const unsigned char **pp,
+                               long length);
+
+/*
+ * end of transparency efforts
+ */
+
+
+ASN1OBJ known_oids[FIN_KNOWN_OID] = {
     {      /* MAC address-- KNOWN_OID_MAC_ADDR */
         NULL, NULL, mac_nid, 7, ma, 0
     },
@@ -299,10 +325,10 @@ void free_setval (setval *freeme)
  *   - parse an ASN.1 SET an extract all the values in it
  */
 static setval*
-get_set (const unsigned char **p, int len)
+get_set (unsigned char **p, int len)
 {
-    unsigned char *ptr = (unsigned char *)*p, *op;
-    unsigned char *fin = (unsigned char *)(*p + len);
+    unsigned char *ptr, *op;
+    unsigned char *tmp;
     int inf, tag, xclass, length, hl;
     long l;
     ASN1_OBJECT *ao = NULL;
@@ -311,22 +337,20 @@ get_set (const unsigned char **p, int len)
     ASN1_OCTET_STRING *os = NULL;
     ASN1_BIT_STRING *abit = NULL;
 
-    if (ptr == NULL) {
-        return NULL;
-    }
+    ptr = *p;
     /*
      * this assumes we've already parsed past a V_ASN1_SET
      */
     length = len;
-    while (ptr < fin) {
+    while (length) {
         op = ptr;
-        inf = ASN1_get_object((const unsigned char **)&ptr, &l, &tag, &xclass, length);
+        tmp = ptr;
+        inf = ASN1_get_object((const unsigned char **)&tmp, &l, &tag, &xclass, length);
         if (inf & 0x80) {
             free_setval(ret);
             return NULL;
         }
-        hl = (ptr - op);
-        length -= hl;
+
         /*
          * it's a linked list of setvals...
          */
@@ -350,7 +374,7 @@ get_set (const unsigned char **p, int len)
          * ...fill it in according to the tag
          */
         if (tag == V_ASN1_OBJECT) {
-            c2i_ASN1_OBJECT(&ao, (const unsigned char **)&ptr, l);
+            d2i_ASN1_OBJECT(&ao, (const unsigned char **)&ptr, length);
             next->type = SETVAL_NID;
             next->nid = object_to_nid(ao);
             ASN1_OBJECT_free(ao);
@@ -364,21 +388,21 @@ get_set (const unsigned char **p, int len)
                    (tag == V_ASN1_UTCTIME) ||
                    (tag == V_ASN1_GENERALIZEDTIME)) {
             next->type = SETVAL_STR;
-            if ((next->str = (unsigned char *)malloc(l + 1)) == NULL) {
+            if ((next->str = (unsigned char *)malloc(length + 1)) == NULL) {
                 free_setval(ret);
                 return NULL;
             }
-            memset(next->str, 0, l+1);
-            memcpy(next->str, ptr, l);
+            memset(next->str, 0, length+1);
+            memcpy(next->str, ptr, length);
             ptr += l;
         } else if (tag == V_ASN1_INTEGER) {
-            c2i_ASN1_INTEGER(&ai, (const unsigned char **)&ptr, l);
+            d2i_ASN1_INTEGER(&ai, (const unsigned char **)&ptr, length);
             next->type = SETVAL_INT;
             next->integer = ASN1_INTEGER_get(ai);
             ASN1_INTEGER_free(ai);
             ai = NULL;
         } else if (tag == V_ASN1_OCTET_STRING) {
-            os = d2i_ASN1_OCTET_STRING(NULL, (const unsigned char **)&op, l+hl);
+            os = d2i_ASN1_OCTET_STRING(NULL, (const unsigned char **)&op, length);
             if ((os != NULL) && (os->length > 0)) {
                 next->type = SETVAL_OCTSTR;
                 if ((next->octstr = (unsigned char *)malloc(os->length)) == NULL) {
@@ -389,16 +413,16 @@ get_set (const unsigned char **p, int len)
                 memcpy(next->octstr, os->data, os->length);
             }
             if (os != NULL) {
-                M_ASN1_OCTET_STRING_free(os);
+                ASN1_OCTET_STRING_free(os);
             }
             os = NULL;
-            ptr += l;
-        } else if (tag == V_ASN1_BOOLEAN) {
-            next->type = SETVAL_BOOL;
-            next->boolean = d2i_ASN1_BOOLEAN(NULL, (const unsigned char **)&ptr, l);
-            ptr += l;
+//            ptr += l;
+//        } else if (tag == V_ASN1_BOOLEAN) {
+//            next->type = SETVAL_BOOL;
+//            next->boolean = d2i_ASN1_BOOLEAN(NULL, (const unsigned char **)&ptr, l);
+//            ptr += l;
         } else if (tag == V_ASN1_BIT_STRING) {
-            c2i_ASN1_BIT_STRING(&abit, (const unsigned char **)&ptr, l);
+            d2i_ASN1_BIT_STRING(&abit, (const unsigned char **)&ptr, length);
             next->type = SETVAL_BITSTR;
             if ((next->bitstr = (unsigned char *)malloc(abit->length)) == NULL) {
                 free_setval(ret);
@@ -409,6 +433,8 @@ get_set (const unsigned char **p, int len)
             ASN1_BIT_STRING_free(abit);
             abit = NULL;
         }
+        hl = (ptr - op);
+        length -= hl;
     }
     if (ret->type == SETVAL_ERROR) {
         free_setval(ret);
@@ -435,7 +461,8 @@ create_custom_extension (int oid, const unsigned char *str, int len)
         case KNOWN_OID_MAC_ADDR:
         case KNOWN_OID_DEVID:
         case KNOWN_OID_DRINK:
-            if ((ia5 = M_ASN1_IA5STRING_new()) == NULL) {
+
+            if ((ia5 = ASN1_STRING_type_new(V_ASN1_IA5STRING)) == NULL) {
                 goto fin;
             }
             ASN1_STRING_set((ASN1_STRING *)ia5, 
@@ -465,7 +492,7 @@ create_custom_extension (int oid, const unsigned char *str, int len)
         default:
             goto fin;
     }
-    if ((octstr = M_ASN1_OCTET_STRING_new()) == NULL) {
+    if ((octstr = ASN1_STRING_type_new(V_ASN1_OCTET_STRING)) == NULL) {
         goto fin;
     }
     octstr->data = der;
@@ -476,7 +503,7 @@ create_custom_extension (int oid, const unsigned char *str, int len)
                                       0, octstr);
 fin:
     if (ia5 != NULL) {
-        M_ASN1_IA5STRING_free(ia5);
+        ASN1_STRING_free((ASN1_STRING *)ia5);
     }
     if (ai != NULL) {
         ASN1_INTEGER_free(ai);
@@ -495,11 +522,11 @@ fin:
 static int
 generate_csr (struct est_client *client)
 {
-    int i, challp_len, pkey_id, tag, xclass, inf, asn1len, attrlen;
+    int i, challp_len, pkey_id, tag, xclass, inf, asn1len, attrlen, length, hl;
     int nid, keylen = 2048, crypto_nid = NID_rsaEncryption;    /* default is 2048 bit RSA... */ 
     const EVP_MD *md = EVP_sha256();                           /* ...and sha256 */
     const unsigned char *tot, *op;
-    unsigned char *challp, *p, *attrdata = NULL;
+    unsigned char *challp, *p, *tp, *attrdata = NULL;
     char serialnum[10];
     BIO *bio = NULL, *b64 = NULL;
     ASN1_OBJECT *o = NULL;
@@ -511,8 +538,8 @@ generate_csr (struct est_client *client)
     X509_NAME *subj = NULL;
     X509_REQ *req = NULL;
     long len;
-    EVP_ENCODE_CTX ctx;
-    setval *values, *value;
+    EVP_ENCODE_CTX *ctx;
+    setval *values = NULL, *value;
     STACK_OF(X509_EXTENSION) *exts = NULL;
     STACK_OF(ASN1_OBJECT) *sk = NULL;
     X509_EXTENSION *ex = NULL;
@@ -592,7 +619,9 @@ generate_csr (struct est_client *client)
         }
         p = (unsigned char *)csrattrs;
         tot = p + csrattrs_len;
-
+        /*
+         * csr attrs are a SEQUENCE of attributes or objects
+         */ 
         inf = ASN1_get_object((const unsigned char **)&p, &len, &tag, &xclass, csrattrs_len);
         if (inf & 0x80) {
             debug("ASN.1 is not well-formed!\n");
@@ -608,51 +637,44 @@ generate_csr (struct est_client *client)
              */
             goto gen_csr;
         }
+        length = len;
 
         while (p < tot) {
             op = p;
+            tp = p;
             /*
-             * go through the SEQUENCE OF looking for objects and attributes
+             * go through the SEQUENCE looking for objects and attributes...
+             * get a sneak peak using tp instead of p
              */
-            inf = ASN1_get_object((const unsigned char **)&p, &len, &tag, &xclass, csrattrs_len);
+            inf = ASN1_get_object((const unsigned char **)&tp, &len, &tag, &xclass, length);
             if (inf & 0x80) {
                 debug("bad asn.1\n");
                 break;
             }
+            hl = (tp - op);
+            length -= hl;
             /*
-             * a SEQUENCE here indicates an attribute
+             * a SEQUENCE here indicates an attribute (and object and a set)
              */
-            if (inf & V_ASN1_CONSTRUCTED) {
+            if (tag == V_ASN1_SEQUENCE) {
+                debug("got a SEQUENCE...\n");
                 /*
-                 * parse the attribute, if parsing fails for any reason, skip
-                 * this attribute and see what's next, don't give up entirely
+                 * get the SEQUENCE...
                  */
-                op = p + len;   /* mark the end of this attriute */
-                if (tag != V_ASN1_SEQUENCE) {
-                    debug("it's not an attribute! Should be a SEQUENCE here\n");
-                    goto parse_fail;
-                }
-                values = NULL;
-                inf = ASN1_get_object((const unsigned char **)&p, &len, &tag, &xclass, csrattrs_len);
+                inf = ASN1_get_object((const unsigned char **)&p, &len, &tag, &xclass, length);
                 if (inf & 0x80) {
-                    debug("bad asn.1 for attribute\n");
-                    goto parse_fail;
+                    debug("bad asn.1\n");
+                    break;
                 }
                 /*
-                 * an attribute starts out with an object...
+                 * ...and then the SET...
                  */
-                if (tag != V_ASN1_OBJECT) {
-                    debug("it's not an attribute! Should be an object here\n");
-                    goto parse_fail;
-                }
-                c2i_ASN1_OBJECT(&o, (const unsigned char **)&p, len);
+                d2i_ASN1_OBJECT(&o, (const unsigned char **)&p, length);
                 nid = object_to_nid(o);
                 ASN1_OBJECT_free(o);
                 o = NULL;
-                /*
-                 * ...and then a SET...
-                 */
-                inf = ASN1_get_object((const unsigned char **)&p, &len, &tag, &xclass, csrattrs_len);
+                
+                inf = ASN1_get_object((const unsigned char **)&p, &len, &tag, &xclass, length);
                 if (inf & 0x80) {
                     debug("bad asn.1 for SET in attribute\n");
                     goto parse_fail;
@@ -664,10 +686,11 @@ generate_csr (struct est_client *client)
                 /*
                  * ...and all the values in the SET
                  */
-                if ((values = get_set((const unsigned char **)&p, len)) == NULL) {
+                if ((values = get_set(&p, len)) == NULL) {
                     debug("couldn't get values from set!\n");
                     goto parse_fail;
                 }
+                p += len;
                 debug("got an attribute...");
                 switch (nid) {
                     /*
@@ -832,11 +855,11 @@ generate_csr (struct est_client *client)
                         goto parse_fail;
                 }
                 free_setval(values);
+                values = NULL;
 parse_fail:
                 /*
                  * end of attribute...next!
                  */
-                p = (unsigned char *)op;
                 continue;
             }
             /*
@@ -845,7 +868,8 @@ parse_fail:
              * Try to make the most sense out of these.
              */
             if (tag == V_ASN1_OBJECT) {
-                c2i_ASN1_OBJECT(&o, (const unsigned char **)&p, len);
+                debug("got an object!\n");
+                d2i_ASN1_OBJECT(&o, (const unsigned char **)&p, length);
                 nid = object_to_nid(o);
                 ASN1_OBJECT_free(o);
                 o = NULL;
@@ -1066,14 +1090,19 @@ gen_csr:
     if ((send_buff.ptr = malloc(2*asn1len)) == NULL) {
         goto csr_fail;
     }
+
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        goto csr_fail;
+    }
     /*
      * base64 encode the request
      */
-    EVP_EncodeInit(&ctx);
-    EVP_EncodeUpdate(&ctx, (unsigned char *)send_buff.ptr, &i, p, asn1len);
+    EVP_EncodeInit(ctx);
+    EVP_EncodeUpdate(ctx, (unsigned char *)send_buff.ptr, &i, p, asn1len);
     send_buff.left = i;
-    EVP_EncodeFinal(&ctx, (unsigned char *)&(send_buff.ptr[i]), &i);
+    EVP_EncodeFinal(ctx, (unsigned char *)&(send_buff.ptr[i]), &i);
     send_buff.left += i;
+    EVP_ENCODE_CTX_free(ctx);
         
     send_buff.txrx = 0;
     /*
@@ -1105,6 +1134,7 @@ static void
 ssl_info_callback (const SSL *ssl, int type, int val)
 {
     struct est_client *client;
+    SSL_CTX *sctx;
     
     if (type & SSL_CB_HANDSHAKE_DONE) {
         /*
@@ -1122,7 +1152,8 @@ ssl_info_callback (const SSL *ssl, int type, int val)
          * get the client structure out of the SSL_CTX and try to
          * generate a CSR with this new tls_unique value
          */
-        if ((client = (struct est_client *)SSL_CTX_get_ex_data(ssl->ctx, idx)) != NULL) {
+        sctx = SSL_get_SSL_CTX(ssl);
+        if ((client = (struct est_client *)SSL_CTX_get_ex_data(sctx, idx)) != NULL) {
             if (generate_csr(client) < 1) {
                 /*
                  * so we failed, hope to try again later-- not fatal!
@@ -1167,8 +1198,6 @@ static CURLcode ssl_ctx_callback (CURL *curl, void *sslctx, void *parm)
 {
     SSL_CTX *ctx = (SSL_CTX *)sslctx;
     struct est_client *client = (struct est_client *)parm;
-    char *argp;         /* unused */
-    long argl;          /* unused */
 
     /*
      * register a callback so we know when negotiation has finished
@@ -1176,7 +1205,7 @@ static CURLcode ssl_ctx_callback (CURL *curl, void *sslctx, void *parm)
      * when the connection is complete and we need to generate a CSR.
      */
     SSL_CTX_set_info_callback(ctx, ssl_info_callback);
-    idx = SSL_CTX_get_ex_new_index(argl, argp, NULL, NULL, NULL);
+    idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
     SSL_CTX_set_ex_data(ctx, idx, client);
         
 #ifdef OPENSSL_HAS_TLS_PWD
@@ -1205,7 +1234,7 @@ get_p7_from_resp (char *ptr, int len)
     int i, asn1len;
     PKCS7 *p7 = NULL;
     unsigned char *asn1;
-    EVP_ENCODE_CTX ctx;
+    EVP_ENCODE_CTX *ctx;
     BIO *bio = NULL;
 
     if (ptr == NULL) {
@@ -1217,12 +1246,17 @@ get_p7_from_resp (char *ptr, int len)
     if ((asn1 = (unsigned char *)malloc(len)) == NULL) {
         return NULL;
     }
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        free(asn1);
+        return NULL;
+    }
     i = len;
-    EVP_DecodeInit(&ctx);
-    (void)EVP_DecodeUpdate(&ctx, asn1, &i, (unsigned char *)ptr, len);
+    EVP_DecodeInit(ctx);
+    (void)EVP_DecodeUpdate(ctx, asn1, &i, (unsigned char *)ptr, len);
     asn1len = i;
-    (void)EVP_DecodeFinal(&ctx, &(asn1[i]), &i);
+    (void)EVP_DecodeFinal(ctx, &(asn1[i]), &i);
     asn1len += i;
+    EVP_ENCODE_CTX_free(ctx);
     /*
      * convert the DER-encoded blob into a PKCS7 structure
      */
@@ -1425,7 +1459,7 @@ parse_multi_part (X509_STORE *store, char *parts, int totallen)
     int i, asn1len, curmime = 0;
     PKCS8_PRIV_KEY_INFO *p8info = NULL;
     BIO *bio = NULL;
-    EVP_ENCODE_CTX ctx;
+    EVP_ENCODE_CTX *ctx;
     EVP_PKEY *pkey = NULL;
     
     if ((parts == NULL) || (totallen < 1)) {
@@ -1481,12 +1515,17 @@ parse_multi_part (X509_STORE *store, char *parts, int totallen)
         debug("unable to alloc space for p8\n");
         return -1;
     }
-    EVP_DecodeInit(&ctx);
-    EVP_DecodeUpdate(&ctx, buf, &i, (unsigned char *)p8start, (p8end - p8start));
+    if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+        debug("can't create encode context!\n");
+        return -1;
+    }
+    EVP_DecodeInit(ctx);
+    EVP_DecodeUpdate(ctx, buf, &i, (unsigned char *)p8start, (p8end - p8start));
     asn1len = i;
-    EVP_DecodeFinal(&ctx, &(buf[i]), &i);
+    EVP_DecodeFinal(ctx, &(buf[i]), &i);
     asn1len += i;
-
+    EVP_ENCODE_CTX_free(ctx);
+    
     /*
      * create a p8 out of asn1
      */
@@ -1564,11 +1603,11 @@ do_cest (struct est_client *client)
 {
     CURLcode res;
     struct curl_slist *slist = NULL;
-    char cmd[120], resp[10000];
+    char cmd[250], resp[10000];
     int socket_open = 0, i;
-    unsigned long rcode;
+    long rcode;
     X509_STORE *cert_store = NULL;
-    EVP_ENCODE_CTX ctx;
+    EVP_ENCODE_CTX *ctx;
     int ret = EST_FAILURE;
 
     OpenSSL_add_ssl_algorithms();
@@ -1767,11 +1806,16 @@ do_cest (struct est_client *client)
             } else {
                 i = strlen(resp);
                 memset(csrattrs, 0, i);
-                EVP_DecodeInit(&ctx);
-                (void)EVP_DecodeUpdate(&ctx, csrattrs, &i, (unsigned char *)resp, strlen(resp));
-                csrattrs_len = i;
-                (void)EVP_DecodeFinal(&ctx, &(csrattrs[i]), &i);
-                csrattrs_len += i;
+                if ((ctx = EVP_ENCODE_CTX_new()) == NULL) {
+                    csrattrs_len = 0;
+                } else {
+                    EVP_DecodeInit(ctx);
+                    (void)EVP_DecodeUpdate(ctx, csrattrs, &i, (unsigned char *)resp, strlen(resp));
+                    csrattrs_len = i;
+                    (void)EVP_DecodeFinal(ctx, &(csrattrs[i]), &i);
+                    csrattrs_len += i;
+                    EVP_ENCODE_CTX_free(ctx);
+                }
             }
         }
     }
