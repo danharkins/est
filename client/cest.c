@@ -98,19 +98,9 @@ typedef struct asn1_object_st
     int flags;
 } ASN1OBJ;
 
-ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
-                             long length);
-int i2c_ASN1_BIT_STRING(ASN1_BIT_STRING *a, unsigned char **pp);
-ASN1_BIT_STRING *c2i_ASN1_BIT_STRING(ASN1_BIT_STRING **a,
-                                     const unsigned char **pp, long length);
-int i2c_ASN1_INTEGER(ASN1_INTEGER *a, unsigned char **pp);
-ASN1_INTEGER *c2i_ASN1_INTEGER(ASN1_INTEGER **a, const unsigned char **pp,
-                               long length);
-
 /*
  * end of transparency efforts
  */
-
 
 ASN1OBJ known_oids[FIN_KNOWN_OID] = {
     {      /* MAC address-- KNOWN_OID_MAC_ADDR */
